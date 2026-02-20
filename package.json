@@ -17,7 +17,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "mkdir -p dist && bun build ./sources/main.ts --outfile ./dist/main.js",
+    "build": "mkdir -p dist && bun build ./sources/main.ts --outfile ./dist/main.js --target node",
     "build:binary": "bun build ./sources/main.ts --compile --outfile ./dist/brex",
     "dev": "bun ./sources/main.ts",
     "typecheck": "tsc --noEmit"
