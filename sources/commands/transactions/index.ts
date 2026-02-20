@@ -172,8 +172,8 @@ async function listTransactions(
   format: "table" | "json"
 ): Promise<void> {
   const pathBase = options.type === "cash"
-    ? `/v2/accounts/cash/${accountId}/transactions`
-    : `/v2/accounts/card/${accountId}/transactions`;
+    ? `/v2/transactions/cash/${accountId}`
+    : `/v2/transactions/card/${accountId}`;
   const path = withQuery(pathBase, options);
   const response = await context.client.fetch<ListTransactionsResponse>(path);
   const transactions = response.items ?? response.transactions ?? [];
@@ -213,8 +213,8 @@ async function getTransaction(
   format: "table" | "json"
 ): Promise<void> {
   const path = options.type === "cash"
-    ? `/v2/accounts/cash/${accountId}/transactions/${transactionId}`
-    : `/v2/accounts/card/${accountId}/transactions/${transactionId}`;
+    ? `/v2/transactions/cash/${accountId}/${transactionId}`
+    : `/v2/transactions/card/${accountId}/${transactionId}`;
   const response = await context.client.fetch<GetTransactionResponse>(path);
   const transaction = response.cash_transaction ?? response.card_transaction ?? response.transaction ?? response.item;
 
