@@ -37,6 +37,7 @@ type CreateOptions = {
   url: string;
   status?: string;
   events?: string[];
+  idempotencyKey: string;
 };
 
 type UpdateOptions = {
@@ -124,6 +125,7 @@ function parseCreateOptions(args: readonly string[]): CreateOptions {
   let url: string | undefined;
   let status: string | undefined;
   let events: string[] | undefined;
+  let idempotencyKey: string | undefined;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -150,13 +152,20 @@ function parseCreateOptions(args: readonly string[]): CreateOptions {
       continue;
     }
 
+    if (arg === "--idempotency-key") {
+      const value = args[++i];
+      if (!value) throw new Error("--idempotency-key requires a value");
+      idempotencyKey = value;
+      continue;
+    }
+
     if (arg.startsWith("-")) {
       throw new Error(`Unknown option: ${arg}`);
     }
   }
 
   if (!url) throw new Error("Missing required --url");
-  return { url, status, events };
+  return { url, status, events, idempotencyKey: idempotencyKey ?? crypto.randomUUID() };
 }
 
 function parseUpdateOptions(args: readonly string[]): UpdateOptions {
@@ -237,7 +246,7 @@ async function listWebhooks(
   );
 
   if (response.next_cursor) {
-    console.log(`\nNext cursor: ${response.next_cursor}`);
+    console.log(`\nMore results available. Run with: --cursor ${response.next_cursor}`);
   }
 }
 
@@ -278,7 +287,7 @@ async function createWebhook(
 
   const response = await context.client.fetch<GetWebhookResponse>("/v1/webhooks", {
     method: "POST",
-    headers: { "Idempotency-Key": crypto.randomUUID() },
+    headers: { "Idempotency-Key": options.idempotencyKey },
     body: JSON.stringify(body),
   });
   const webhook = response.webhook ?? response.item ?? response;

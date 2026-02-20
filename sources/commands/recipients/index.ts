@@ -1,66 +1,43 @@
 import type { Command, CommandContext } from "../types.js";
 import { parseOutputFlag, printJson, printTable, truncate } from "../../output.js";
 
-const USAGE = `brex recipients
-brex recipients list [--limit <N>] [--cursor <cursor>] [--name <name>]
-brex recipients get <counterparty-id>
-brex recipients add --name <name> --account <number> --routing <number> [--account-type CHECKING|SAVINGS]
-brex recipients delete <counterparty-id>
+const USAGE = `brex recipients list [--limit <N>] [--cursor <cursor>] [--name <name>]
+brex recipients get <vendor-id>
+brex recipients create --name <company-name> [--email <email>] [--phone <phone>] [--routing <number> --account <number> --account-type CHECKING|SAVING --account-class BUSINESS|PERSONAL]
+brex recipients delete <vendor-id>
 brex recipients --json`;
 
-type PaymentCounterparty = {
+type PaymentAccountDetails = {
+  type: string;
+  payment_instrument_id?: string;
+  routing_number?: string;
+  account_number?: string;
+  account_type?: string;
+  account_class?: string;
+  beneficiary_name?: string;
+};
+
+type PaymentAccount = {
+  details: PaymentAccountDetails;
+};
+
+type Vendor = {
   id: string;
-  name?: string;
-  payment_instruments?: Array<{
-    bank_transfer?: {
-      account_number?: string;
-      routing_number?: string;
-      bank_name?: string;
-      account_type?: string;
-      country?: string;
-      currency?: string;
-    };
-  }>;
-  created_at?: string;
+  company_name?: string;
+  email?: string;
+  phone?: string;
+  payment_accounts?: PaymentAccount[];
 };
 
-type ListCounterpartiesResponse = {
-  items?: PaymentCounterparty[];
-  payment_counterparties?: PaymentCounterparty[];
+type ListVendorsResponse = {
+  items: Vendor[];
   next_cursor?: string;
-};
-
-type GetCounterpartyResponse = {
-  payment_counterparty?: PaymentCounterparty;
-  item?: PaymentCounterparty;
-} & PaymentCounterparty;
-
-type CreateCounterpartyRequest = {
-  name: string;
-  payment_instrument: {
-    bank_transfer: {
-      account_number: string;
-      routing_number: string;
-      account_type?: string;
-      country?: string;
-      currency?: string;
-    };
-  };
 };
 
 type ListOptions = {
   limit?: number;
   cursor?: string;
   name?: string;
-};
-
-type AddOptions = {
-  name: string;
-  accountNumber: string;
-  routingNumber: string;
-  accountType?: "CHECKING" | "SAVINGS";
-  country?: string;
-  currency?: string;
 };
 
 export const recipientsCommand: Command = {
@@ -74,25 +51,31 @@ export const recipientsCommand: Command = {
 
     switch (subcommand) {
       case "list":
-        await listRecipients(context, parseListOptions(remaining.slice(1)), format);
+        await listVendors(context, parseListOptions(remaining.slice(1)), format);
         return;
       case "get": {
-        const recipientId = remaining[1];
-        if (!recipientId) throw new Error("Missing recipient ID. Usage: brex recipients get <counterparty-id>");
-        await getRecipient(context, recipientId, format);
+        const vendorId = remaining[1];
+        if (!vendorId) throw new Error("Missing vendor ID. Usage: brex recipients get <vendor-id>");
+        await getVendor(context, vendorId, format);
         return;
       }
-      case "add":
-        await addRecipient(context, parseAddOptions(remaining.slice(1)), format);
+      case "create": {
+        const options = parseCreateOptions(remaining.slice(1));
+        await createVendor(context, options, format);
         return;
+      }
       case "delete": {
-        const recipientId = remaining[1];
-        if (!recipientId) throw new Error("Missing recipient ID. Usage: brex recipients delete <counterparty-id>");
-        await deleteRecipient(context, recipientId);
+        const vendorId = remaining[1];
+        if (!vendorId) throw new Error("Missing vendor ID. Usage: brex recipients delete <vendor-id>");
+        await deleteVendor(context, vendorId);
         return;
       }
       default:
-        throw new Error(`Unknown subcommand: ${subcommand}. Use 'list', 'get', 'add', or 'delete'.`);
+        if (subcommand.startsWith("-")) {
+          await listVendors(context, parseListOptions(remaining), format);
+          return;
+        }
+        throw new Error(`Unknown subcommand: ${subcommand}. Use 'list', 'get', 'create', or 'delete'.`);
     }
   },
 };
@@ -137,13 +120,26 @@ function parseListOptions(args: readonly string[]): ListOptions {
   return options;
 }
 
-function parseAddOptions(args: readonly string[]): AddOptions {
-  let name: string | undefined;
-  let accountNumber: string | undefined;
+type CreateVendorOptions = {
+  companyName: string;
+  email?: string;
+  phone?: string;
+  routingNumber?: string;
+  accountNumber?: string;
+  accountType?: "CHECKING" | "SAVING";
+  accountClass?: "BUSINESS" | "PERSONAL";
+  idempotencyKey: string;
+};
+
+function parseCreateOptions(args: readonly string[]): CreateVendorOptions {
+  let companyName: string | undefined;
+  let email: string | undefined;
+  let phone: string | undefined;
   let routingNumber: string | undefined;
-  let accountType: "CHECKING" | "SAVINGS" | undefined;
-  let country: string | undefined;
-  let currency: string | undefined;
+  let accountNumber: string | undefined;
+  let accountType: "CHECKING" | "SAVING" | undefined;
+  let accountClass: "BUSINESS" | "PERSONAL" | undefined;
+  let idempotencyKey: string | undefined;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -151,61 +147,121 @@ function parseAddOptions(args: readonly string[]): AddOptions {
 
     if (arg === "--name") {
       const value = args[++i];
-      if (!value) throw new Error("--name requires a value");
-      name = value;
+      if (!value) throw new Error("--name requires a company name");
+      companyName = value;
       continue;
     }
-
-    if (arg === "--account") {
+    if (arg === "--email") {
       const value = args[++i];
-      if (!value) throw new Error("--account requires a value");
-      accountNumber = value;
+      if (!value) throw new Error("--email requires a value");
+      email = value;
       continue;
     }
-
+    if (arg === "--phone") {
+      const value = args[++i];
+      if (!value) throw new Error("--phone requires a value");
+      phone = value;
+      continue;
+    }
     if (arg === "--routing") {
       const value = args[++i];
-      if (!value) throw new Error("--routing requires a value");
+      if (!value) throw new Error("--routing requires a routing number");
       routingNumber = value;
       continue;
     }
-
-    if (arg === "--account-type") {
+    if (arg === "--account") {
       const value = args[++i];
-      if (!value || (value !== "CHECKING" && value !== "SAVINGS")) {
-        throw new Error("--account-type must be CHECKING or SAVINGS");
+      if (!value) throw new Error("--account requires an account number");
+      accountNumber = value;
+      continue;
+    }
+    if (arg === "--account-type") {
+      const value = args[++i]?.toUpperCase();
+      if (value !== "CHECKING" && value !== "SAVING") {
+        throw new Error("--account-type must be CHECKING or SAVING");
       }
       accountType = value;
       continue;
     }
-
-    if (arg === "--country") {
-      const value = args[++i];
-      if (!value) throw new Error("--country requires a value");
-      country = value;
+    if (arg === "--account-class") {
+      const value = args[++i]?.toUpperCase();
+      if (value !== "BUSINESS" && value !== "PERSONAL") {
+        throw new Error("--account-class must be BUSINESS or PERSONAL");
+      }
+      accountClass = value;
       continue;
     }
-
-    if (arg === "--currency") {
+    if (arg === "--idempotency-key") {
       const value = args[++i];
-      if (!value) throw new Error("--currency requires a value");
-      currency = value;
+      if (!value) throw new Error("--idempotency-key requires a value");
+      idempotencyKey = value;
       continue;
     }
-
     if (arg.startsWith("-")) {
       throw new Error(`Unknown option: ${arg}`);
     }
   }
 
-  if (!name) throw new Error("Missing required --name");
-  if (!accountNumber) throw new Error("Missing required --account");
-  if (!routingNumber) throw new Error("Missing required --routing");
+  if (!companyName) throw new Error("Missing required --name <company-name>");
 
-  return { name, accountNumber, routingNumber, accountType, country, currency };
+  // If any ACH detail is given, require all of them
+  const achFields = [routingNumber, accountNumber, accountType, accountClass];
+  const achProvided = achFields.filter(Boolean).length;
+  if (achProvided > 0 && achProvided < 4) {
+    throw new Error("ACH payment account requires all of: --routing, --account, --account-type, --account-class");
+  }
+
+  return { companyName, email, phone, routingNumber, accountNumber, accountType, accountClass, idempotencyKey: idempotencyKey ?? crypto.randomUUID() };
 }
 
-async function listRecipients(
+async function createVendor(
+  context: CommandContext,
+  options: CreateVendorOptions,
+  format: "table" | "json"
+): Promise<void> {
+  const body: Record<string, unknown> = {
+    company_name: options.companyName,
+  };
+  if (options.email) body.email = options.email;
+  if (options.phone) body.phone = options.phone;
+
+  if (options.routingNumber && options.accountNumber && options.accountType && options.accountClass) {
+    body.payment_accounts = [{
+      details: {
+        type: "ACH",
+        routing_number: options.routingNumber,
+        account_number: options.accountNumber,
+        account_type: options.accountType,
+        account_class: options.accountClass,
+      },
+    }];
+  }
+
+  const vendor = await context.client.fetch<Vendor>("/v1/vendors", {
+    method: "POST",
+    headers: { "Idempotency-Key": options.idempotencyKey },
+    body: JSON.stringify(body),
+  });
+
+  if (format === "json") {
+    printJson(vendor);
+    return;
+  }
+
+  console.log("Vendor Created");
+  console.log("──────────────");
+  console.log(`ID:           ${vendor.id}`);
+  console.log(`Company Name: ${vendor.company_name ?? "-"}`);
+  if (vendor.email) console.log(`Email:        ${vendor.email}`);
+  if (vendor.phone) console.log(`Phone:        ${vendor.phone}`);
+  if (vendor.payment_accounts?.length) {
+    const d = vendor.payment_accounts[0].details;
+    console.log(`Pay Type:     ${d.type}`);
+    if (d.payment_instrument_id) console.log(`Instrument:   ${d.payment_instrument_id}`);
+  }
+}
+
+async function listVendors(
   context: CommandContext,
   options: ListOptions,
   format: "table" | "json"
@@ -215,112 +271,83 @@ async function listRecipients(
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.name) params.set("name", options.name);
   const query = params.toString();
-  const path = query ? `/v1/payment_counterparties?${query}` : "/v1/payment_counterparties";
-  const response = await context.client.fetch<ListCounterpartiesResponse>(path);
-  const recipients = response.items ?? response.payment_counterparties ?? [];
+  const path = query ? `/v1/vendors?${query}` : "/v1/vendors";
+  const response = await context.client.fetch<ListVendorsResponse>(path);
+  const vendors = response.items ?? [];
 
   if (format === "json") {
-    printJson({ items: recipients, nextCursor: response.next_cursor ?? null });
+    printJson({ items: vendors, nextCursor: response.next_cursor ?? null });
     return;
   }
 
-  if (recipients.length === 0) {
-    console.log("No recipients found.");
+  if (vendors.length === 0) {
+    console.log("No vendors found.");
     return;
   }
 
   printTable(
-    recipients.map((recipient) => {
-      const bank = recipient.payment_instruments?.[0]?.bank_transfer;
+    vendors.map((vendor) => {
+      const account = vendor.payment_accounts?.[0]?.details;
       return {
-        id: recipient.id,
-        name: truncate(recipient.name ?? "-", 30),
-        account: bank?.account_number ? `...${bank.account_number.slice(-4)}` : "-",
-        routing: bank?.routing_number ?? "-",
-        bank: truncate(bank?.bank_name ?? "-", 20),
+        id: vendor.id,
+        name: truncate(vendor.company_name ?? "-", 30),
+        email: truncate(vendor.email ?? "-", 25),
+        type: account?.type ?? "-",
+        instrumentId: truncate(account?.payment_instrument_id ?? "-", 20),
       };
     }),
     [
       { key: "id", header: "ID", width: 36 },
-      { key: "name", header: "Name", width: 30 },
-      { key: "account", header: "Account", width: 12 },
-      { key: "routing", header: "Routing", width: 12 },
-      { key: "bank", header: "Bank", width: 20 },
+      { key: "name", header: "Company Name", width: 30 },
+      { key: "email", header: "Email", width: 25 },
+      { key: "type", header: "Pay Type", width: 20 },
+      { key: "instrumentId", header: "Instrument ID", width: 20 },
     ]
   );
 
   if (response.next_cursor) {
-    console.log(`\nNext cursor: ${response.next_cursor}`);
+    console.log(`\nMore results available. Run with: --cursor ${response.next_cursor}`);
   }
 }
 
-async function getRecipient(
+async function getVendor(
   context: CommandContext,
-  recipientId: string,
+  vendorId: string,
   format: "table" | "json"
 ): Promise<void> {
-  const response = await context.client.fetch<GetCounterpartyResponse>(`/v1/payment_counterparties/${recipientId}`);
-  const recipient = response.payment_counterparty ?? response.item ?? response;
+  const vendor = await context.client.fetch<Vendor>(`/v1/vendors/${vendorId}`);
 
   if (format === "json") {
-    printJson(recipient);
+    printJson(vendor);
     return;
   }
 
-  const bank = recipient.payment_instruments?.[0]?.bank_transfer;
+  console.log("Vendor Details");
+  console.log("──────────────");
+  console.log(`ID:           ${vendor.id}`);
+  console.log(`Company Name: ${vendor.company_name ?? "-"}`);
+  if (vendor.email) console.log(`Email:        ${vendor.email}`);
+  if (vendor.phone) console.log(`Phone:        ${vendor.phone}`);
 
-  console.log("Recipient Details");
-  console.log("─────────────────");
-  console.log(`ID:             ${recipient.id}`);
-  console.log(`Name:           ${recipient.name ?? "-"}`);
-  console.log(`Account Number: ${bank?.account_number ?? "-"}`);
-  console.log(`Routing Number: ${bank?.routing_number ?? "-"}`);
-  if (bank?.bank_name) console.log(`Bank Name:      ${bank.bank_name}`);
-  if (bank?.account_type) console.log(`Account Type:   ${bank.account_type}`);
-  if (bank?.country) console.log(`Country:        ${bank.country}`);
-  if (bank?.currency) console.log(`Currency:       ${bank.currency}`);
-}
-
-async function addRecipient(
-  context: CommandContext,
-  options: AddOptions,
-  format: "table" | "json"
-): Promise<void> {
-  const body: CreateCounterpartyRequest = {
-    name: options.name,
-    payment_instrument: {
-      bank_transfer: {
-        account_number: options.accountNumber,
-        routing_number: options.routingNumber,
-        ...(options.accountType ? { account_type: options.accountType } : {}),
-        ...(options.country ? { country: options.country } : {}),
-        ...(options.currency ? { currency: options.currency } : {}),
-      },
-    },
-  };
-
-  const response = await context.client.fetch<GetCounterpartyResponse>("/v1/payment_counterparties", {
-    method: "POST",
-    headers: { "Idempotency-Key": crypto.randomUUID() },
-    body: JSON.stringify(body),
-  });
-  const recipient = response.payment_counterparty ?? response.item ?? response;
-
-  if (format === "json") {
-    printJson(recipient);
-    return;
+  if (vendor.payment_accounts && vendor.payment_accounts.length > 0) {
+    console.log(`\nPayment Accounts (${vendor.payment_accounts.length}):`);
+    for (const account of vendor.payment_accounts) {
+      const d = account.details;
+      console.log(`  Type:          ${d.type}`);
+      if (d.payment_instrument_id) console.log(`  Instrument ID: ${d.payment_instrument_id}`);
+      if (d.routing_number) console.log(`  Routing:       ${d.routing_number}`);
+      if (d.account_number) console.log(`  Account:       ...${d.account_number.slice(-4)}`);
+      if (d.account_type) console.log(`  Account Type:  ${d.account_type}`);
+      if (d.beneficiary_name) console.log(`  Beneficiary:   ${d.beneficiary_name}`);
+      console.log("");
+    }
   }
-
-  console.log("Recipient Created");
-  console.log("─────────────────");
-  console.log(`ID:   ${recipient.id}`);
-  console.log(`Name: ${recipient.name ?? "-"}`);
 }
 
-async function deleteRecipient(context: CommandContext, recipientId: string): Promise<void> {
-  await context.client.fetch(`/v1/payment_counterparties/${recipientId}`, {
+async function deleteVendor(context: CommandContext, vendorId: string): Promise<void> {
+  await context.client.fetch(`/v1/vendors/${vendorId}`, {
     method: "DELETE",
   });
 
-  console.log(`Recipient ${recipientId} deleted.`);
+  console.log(`Vendor ${vendorId} deleted.`);
 }
