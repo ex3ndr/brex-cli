@@ -8,11 +8,11 @@ A powerful CLI for the [Brex Platform API](https://developer.brex.com/). Manage 
 
 ## Features
 
-- **Full Brex API coverage** — accounts, transactions, transfers, recipients, cards, statements, webhooks, and more
-- **Multiple output formats** — human-readable tables or JSON for scripting
-- **Secure token storage** — credentials stored safely in `~/.brex/`
-- **Cash & card accounts** — unified interface for both account types
-- **Scriptable** — no interactive prompts, perfect for CI/CD and automation
+- 🏦 **Full Brex API coverage** — accounts, transactions, transfers, recipients, cards, statements, webhooks, and more
+- 📊 **Multiple output formats** — human-readable tables or JSON for scripting
+- 🔐 **Secure token storage** — credentials stored safely in `~/.brex/`
+- 💳 **Cash & card accounts** — unified interface for both account types
+- 🤖 **Scriptable** — no interactive prompts, perfect for CI/CD and automation
 
 ## Installation
 
