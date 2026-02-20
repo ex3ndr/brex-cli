@@ -65,7 +65,7 @@ export function formatAmount(
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
-  }).format(numeric);
+  }).format(numeric / 100);
 }
 
 export function formatDate(isoString: string | null | undefined): string {
