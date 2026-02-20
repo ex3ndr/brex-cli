@@ -31,8 +31,7 @@ jobs:
 
       - name: Add shebang to entry point
         run: |
-          sed -i '1s;^;#!/usr/bin/env node
-;' dist/main.js
+          sed -i '1s;^;#!/usr/bin/env node;' dist/main.js
 
       - name: Setup Node.js for NPM publish
         uses: actions/setup-node@v4
