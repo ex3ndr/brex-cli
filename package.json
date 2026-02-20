@@ -1,0 +1,32 @@
+{
+  "name": "brex-cli",
+  "version": "0.1.0",
+  "description": "CLI for Brex Banking API",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ex3ndr/brex-cli.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "brex": "./dist/main.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "mkdir -p dist && bun build ./sources/main.ts --outfile ./dist/main.js",
+    "build:binary": "bun build ./sources/main.ts --compile --outfile ./dist/brex",
+    "dev": "bun ./sources/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "date-fns": "^4.1.0"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.8",
+    "typescript": "^5.7.3"
+  }
+}
