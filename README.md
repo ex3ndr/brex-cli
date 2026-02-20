@@ -1,5 +1,7 @@
 # brex-cli
 
+![Brex CLI Hero](hero.jpg)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 A powerful CLI for the [Brex Platform API](https://developer.brex.com/). Manage accounts, transactions, transfers, recipients, webhooks, and more from your terminal.
