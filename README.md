@@ -2,7 +2,7 @@
 
 CLI for the Brex APIs at `https://platform.brexapis.com`.
 
-This project was cloned from `mercury-cli` and then reworked to use Brex endpoints from:
+This project uses Brex endpoints from:
 - Authentication: https://developer.brex.com/openapi/authentication
 - Transactions: https://developer.brex.com/openapi/transactions
 - Team: https://developer.brex.com/openapi/team
