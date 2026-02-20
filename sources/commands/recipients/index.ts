@@ -301,6 +301,7 @@ async function addRecipient(
 
   const response = await context.client.fetch<GetCounterpartyResponse>("/v1/payment_counterparties", {
     method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
     body: JSON.stringify(body),
   });
   const recipient = response.payment_counterparty ?? response.item ?? response;

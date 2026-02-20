@@ -1,5 +1,5 @@
 import type { Command, CommandContext } from "../types.js";
-import { formatAmount, parseOutputFlag, printJson, printTable } from "../../output.js";
+import { formatAmount, formatDate, parseOutputFlag, printJson, printTable } from "../../output.js";
 
 const USAGE = `brex transfer --from <cash-account-id> --to <counterparty-id> --amount <decimal> --idempotency-key <key> [--currency <code>]
 brex transfer get <transfer-id>
@@ -17,6 +17,23 @@ type Transfer = {
   status?: string;
   created_at?: string;
   idempotency_key?: string;
+  display_name?: string;
+  payment_type?: string;
+  process_date?: string;
+  estimated_delivery_date?: string;
+  external_memo?: string;
+  originating_account?: {
+    type?: string;
+    id?: string;
+  };
+  counterparty?: {
+    type?: string;
+    description?: string;
+    routing_number?: string;
+    account_number?: string;
+    external_memo?: string;
+  };
+  // Legacy field shapes (kept for forward-compat)
   from_account?: {
     cash_account?: { id?: string };
   };
@@ -37,7 +54,6 @@ type CreateTransferRequest = {
     };
   };
   amount: TransferAmount;
-  idempotency_key: string;
 };
 
 type ListTransfersResponse = {
@@ -229,7 +245,6 @@ async function createTransfer(
       amount: options.amount,
       currency: options.currency,
     },
-    idempotency_key: options.idempotencyKey,
   };
 
   const response = await context.client.fetch<GetTransferResponse>("/v1/transfers", {
@@ -294,19 +309,21 @@ async function listTransfers(
   printTable(
     transfers.map((transfer) => ({
       id: transfer.id,
-      from: transfer.from_account?.cash_account?.id ?? "-",
-      to: transfer.recipient?.payment_counterparty?.id ?? "-",
+      name: transfer.display_name ?? transfer.counterparty?.description ?? "-",
+      from: transfer.originating_account?.id ?? transfer.from_account?.cash_account?.id ?? "-",
       amount: transfer.amount
-        ? formatAmount(transfer.amount.amount, transfer.amount.currency)
+        ? formatAmount(centsToDecimal(transfer.amount.amount), transfer.amount.currency)
         : "-",
       status: transfer.status ?? "-",
+      date: formatDate(transfer.process_date ?? transfer.created_at),
     })),
     [
       { key: "id", header: "Transfer ID", width: 36 },
+      { key: "name", header: "Name", width: 20 },
       { key: "from", header: "From Account", width: 36 },
-      { key: "to", header: "To Counterparty", width: 36 },
       { key: "amount", header: "Amount", width: 14 },
-      { key: "status", header: "Status", width: 14 },
+      { key: "status", header: "Status", width: 12 },
+      { key: "date", header: "Date", width: 12 },
     ]
   );
 
@@ -318,12 +335,21 @@ async function listTransfers(
 function printTransferDetails(transfer: Transfer, title: string): void {
   console.log(title);
   console.log("──────────────────");
-  console.log(`ID:          ${transfer.id}`);
-  console.log(`From Account:${" "}${transfer.from_account?.cash_account?.id ?? "-"}`);
-  console.log(`To Recipient:${" "}${transfer.recipient?.payment_counterparty?.id ?? "-"}`);
-  console.log(`Amount:      ${transfer.amount ? formatAmount(transfer.amount.amount, transfer.amount.currency) : "-"}`);
-  console.log(`Status:      ${transfer.status ?? "-"}`);
-  if (transfer.idempotency_key) {
-    console.log(`Idempotency: ${transfer.idempotency_key}`);
-  }
+  console.log(`ID:           ${transfer.id}`);
+  console.log(`Name:         ${transfer.display_name ?? transfer.counterparty?.description ?? "-"}`);
+  console.log(`From Account: ${transfer.originating_account?.id ?? transfer.from_account?.cash_account?.id ?? "-"}`);
+  console.log(`To:           ${transfer.counterparty?.description ?? transfer.recipient?.payment_counterparty?.id ?? "-"}`);
+  console.log(`Amount:       ${transfer.amount ? formatAmount(centsToDecimal(transfer.amount.amount), transfer.amount.currency) : "-"}`);
+  console.log(`Status:       ${transfer.status ?? "-"}`);
+  console.log(`Type:         ${transfer.payment_type ?? "-"}`);
+  if (transfer.process_date) console.log(`Process Date: ${formatDate(transfer.process_date)}`);
+  if (transfer.estimated_delivery_date) console.log(`Est Delivery: ${formatDate(transfer.estimated_delivery_date)}`);
+  if (transfer.external_memo) console.log(`Memo:         ${transfer.external_memo}`);
+  if (transfer.idempotency_key) console.log(`Idempotency:  ${transfer.idempotency_key}`);
+}
+
+/** Brex API returns amounts in cents — convert to decimal for display. */
+function centsToDecimal(amount: string | number): number {
+  const numeric = typeof amount === "string" ? Number(amount) : amount;
+  return numeric / 100;
 }
