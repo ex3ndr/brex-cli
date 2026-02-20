@@ -1,6 +1,18 @@
 import type { Command } from "../types.js";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const VERSION = "0.1.0";
+function getVersion(): string {
+  try {
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const pkgPath = join(dir, "..", "..", "..", "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    return pkg.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 export const versionCommand: Command = {
   name: "version",
@@ -8,6 +20,6 @@ export const versionCommand: Command = {
   usage: "brex version",
   aliases: ["v"],
   run: async () => {
-    console.log(`brex-cli v${VERSION}`);
+    console.log(`brex-cli v${getVersion()}`);
   },
 };

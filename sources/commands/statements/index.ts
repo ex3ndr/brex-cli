@@ -1,5 +1,5 @@
 import type { Command, CommandContext } from "../types.js";
-import { formatDate, parseOutputFlag, printJson, printTable } from "../../output.js";
+import { formatAmount, formatDate, parseOutputFlag, printJson, printTable } from "../../output.js";
 
 const USAGE = `brex statements [--scope primary|additional] [--account-id <additional-card-account-id>] [--cursor <cursor>]
 brex statements get <statement-id> [--scope primary|additional] [--account-id <additional-card-account-id>]
@@ -7,11 +7,22 @@ brex statements --json`;
 
 type StatementScope = "primary" | "additional";
 
+type StatementAmount = {
+  amount?: number;
+  currency?: string;
+};
+
 type AccountStatement = {
   id: string;
   statement_status?: string;
   period_start_date?: string;
   period_end_date?: string;
+  period?: {
+    start_date?: string;
+    end_date?: string;
+  };
+  start_balance?: StatementAmount;
+  end_balance?: StatementAmount;
   due_date?: string;
   download_url?: string;
   created_at?: string;
@@ -148,19 +159,21 @@ async function listStatements(
   printTable(
     statements.map((statement) => ({
       id: statement.id,
-      status: statement.statement_status ?? "-",
-      start: formatDate(statement.period_start_date),
-      end: formatDate(statement.period_end_date),
-      due: formatDate(statement.due_date),
-      downloadUrl: statement.download_url ?? "-",
+      start: formatDate(statement.period_start_date ?? statement.period?.start_date),
+      end: formatDate(statement.period_end_date ?? statement.period?.end_date),
+      startBal: statement.start_balance
+        ? formatAmount(centsToDecimal(statement.start_balance.amount), statement.start_balance.currency)
+        : "-",
+      endBal: statement.end_balance
+        ? formatAmount(centsToDecimal(statement.end_balance.amount), statement.end_balance.currency)
+        : "-",
     })),
     [
       { key: "id", header: "Statement ID", width: 36 },
-      { key: "status", header: "Status", width: 12 },
       { key: "start", header: "Start", width: 12 },
       { key: "end", header: "End", width: 12 },
-      { key: "due", header: "Due", width: 12 },
-      { key: "downloadUrl", header: "Download URL", width: 50 },
+      { key: "startBal", header: "Start Bal", width: 14 },
+      { key: "endBal", header: "End Bal", width: 14 },
     ]
   );
 
@@ -193,11 +206,22 @@ async function getStatement(
   console.log("Statement Details");
   console.log("─────────────────");
   console.log(`ID:          ${statement.id}`);
-  console.log(`Status:      ${statement.statement_status ?? "-"}`);
-  console.log(`Period Start:${" "}${formatDate(statement.period_start_date)}`);
-  console.log(`Period End:  ${formatDate(statement.period_end_date)}`);
-  console.log(`Due Date:    ${formatDate(statement.due_date)}`);
-  console.log(`Download:    ${statement.download_url ?? "-"}`);
+  console.log(`Period Start:${" "}${formatDate(statement.period_start_date ?? statement.period?.start_date)}`);
+  console.log(`Period End:  ${formatDate(statement.period_end_date ?? statement.period?.end_date)}`);
+  if (statement.start_balance) {
+    console.log(`Start Bal:   ${formatAmount(centsToDecimal(statement.start_balance.amount), statement.start_balance.currency)}`);
+  }
+  if (statement.end_balance) {
+    console.log(`End Bal:     ${formatAmount(centsToDecimal(statement.end_balance.amount), statement.end_balance.currency)}`);
+  }
+  if (statement.due_date) console.log(`Due Date:    ${formatDate(statement.due_date)}`);
+  if (statement.download_url) console.log(`Download:    ${statement.download_url}`);
+}
+
+/** Brex API returns amounts in cents — convert to decimal for display. */
+function centsToDecimal(amount: number | undefined): number | undefined {
+  if (amount === undefined) return undefined;
+  return amount / 100;
 }
 
 function withCursor(path: string, cursor?: string): string {

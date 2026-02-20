@@ -4,21 +4,16 @@ import { parseOutputFlag, printJson, printTable, truncate } from "../../output.j
 const USAGE = `brex webhooks
 brex webhooks list [--cursor <cursor>] [--limit <N>]
 brex webhooks get <webhook-id>
-brex webhooks create --url <url> [--status <status>] [--events <event1,event2>]
-brex webhooks update <webhook-id> [--url <url>] [--status <status>] [--events <event1,event2>]
+brex webhooks create --url <url> [--events <event1,event2>]
+brex webhooks update <webhook-id> [--url <url>] [--events <event1,event2>]
 brex webhooks delete <webhook-id>
 brex webhooks --json`;
-
-type Subscription = {
-  event_type?: string;
-  status?: string;
-};
 
 type Webhook = {
   id: string;
   url?: string;
   status?: string;
-  subscriptions?: Subscription[];
+  event_types?: string[];
   created_at?: string;
 };
 
@@ -229,10 +224,7 @@ async function listWebhooks(
       url: truncate(webhook.url ?? "-", 40),
       status: webhook.status ?? "-",
       events: truncate(
-        (webhook.subscriptions ?? [])
-          .map((subscription) => subscription.event_type)
-          .filter((eventType): eventType is string => Boolean(eventType))
-          .join(", ") || "-",
+        (webhook.event_types ?? []).join(", ") || "-",
         35
       ),
     })),
@@ -262,9 +254,7 @@ async function getWebhook(
     return;
   }
 
-  const events = (webhook.subscriptions ?? [])
-    .map((subscription) => subscription.event_type)
-    .filter((eventType): eventType is string => Boolean(eventType));
+  const events = webhook.event_types ?? [];
 
   console.log("Webhook Details");
   console.log("───────────────");
@@ -282,16 +272,13 @@ async function createWebhook(
   const body: Record<string, unknown> = {
     url: options.url,
   };
-  if (options.status) body.status = options.status;
   if (options.events && options.events.length > 0) {
-    body.subscriptions = options.events.map((eventType) => ({
-      event_type: eventType,
-      status: "ACTIVE",
-    }));
+    body.event_types = options.events;
   }
 
   const response = await context.client.fetch<GetWebhookResponse>("/v1/webhooks", {
     method: "POST",
+    headers: { "Idempotency-Key": crypto.randomUUID() },
     body: JSON.stringify(body),
   });
   const webhook = response.webhook ?? response.item ?? response;
@@ -314,15 +301,20 @@ async function updateWebhook(
   options: UpdateOptions,
   format: "table" | "json"
 ): Promise<void> {
-  const body: Record<string, unknown> = {};
-  if (options.url) body.url = options.url;
-  if (options.status) body.status = options.status;
-  if (options.events && options.events.length > 0) {
-    body.subscriptions = options.events.map((eventType) => ({
-      event_type: eventType,
-      status: "ACTIVE",
-    }));
+  // GET existing webhook first to preserve fields not being updated (PUT replaces the entire resource)
+  const existing = await context.client.fetch<GetWebhookResponse>(`/v1/webhooks/${webhookId}`);
+  const current = existing.webhook ?? existing.item ?? existing;
+
+  if (!current.url && !current.id) {
+    throw new Error(`Could not retrieve existing webhook ${webhookId} — unexpected API response`);
   }
+
+  const body: Record<string, unknown> = {
+    url: options.url ?? current.url,
+    event_types: options.events && options.events.length > 0
+      ? options.events
+      : current.event_types ?? [],
+  };
 
   const response = await context.client.fetch<GetWebhookResponse>(`/v1/webhooks/${webhookId}`, {
     method: "PUT",

@@ -18,6 +18,12 @@ function ensureConfigDir(): void {
 }
 
 export function loadToken(): string | null {
+  // Environment variable takes precedence over stored token
+  const envToken = process.env.BREX_API_TOKEN?.trim();
+  if (envToken && envToken.length > 0) {
+    return envToken;
+  }
+
   if (!existsSync(TOKEN_PATH)) {
     return null;
   }

@@ -8,11 +8,19 @@ brex cards --json`;
 type Card = {
   id: string;
   card_name?: string;
+  card_type?: string;
   status?: string;
   expiration_month?: string | number;
   expiration_year?: string | number;
+  expiration_date?: {
+    month?: number;
+    year?: number;
+  };
   last_four?: string;
   last_4?: string;
+  owner?: {
+    user_id?: string;
+  };
   cardholder?: {
     user_id?: string;
   };
@@ -132,11 +140,14 @@ async function listCards(
   printTable(
     cards.map((card) => ({
       id: card.id,
-      name: card.card_name ?? "-",
+      name: card.card_name ?? card.card_type ?? "-",
       last4: card.last_four ?? card.last_4 ?? "-",
       status: card.status ?? "-",
-      expires: formatExpiration(card.expiration_month, card.expiration_year),
-      userId: card.cardholder?.user_id ?? "-",
+      expires: formatExpiration(
+        card.expiration_month ?? card.expiration_date?.month,
+        card.expiration_year ?? card.expiration_date?.year
+      ),
+      userId: card.owner?.user_id ?? card.cardholder?.user_id ?? "-",
     })),
     [
       { key: "id", header: "Card ID", width: 36 },
@@ -169,11 +180,11 @@ async function getCard(
   console.log("Card Details");
   console.log("────────────");
   console.log(`ID:         ${card.id}`);
-  console.log(`Name:       ${card.card_name ?? "-"}`);
+  console.log(`Name:       ${card.card_name ?? card.card_type ?? "-"}`);
   console.log(`Status:     ${card.status ?? "-"}`);
   console.log(`Last 4:     ${card.last_four ?? card.last_4 ?? "-"}`);
-  console.log(`Expires:    ${formatExpiration(card.expiration_month, card.expiration_year)}`);
-  console.log(`User ID:    ${card.cardholder?.user_id ?? "-"}`);
+  console.log(`Expires:    ${formatExpiration(card.expiration_month ?? card.expiration_date?.month, card.expiration_year ?? card.expiration_date?.year)}`);
+  console.log(`User ID:    ${card.owner?.user_id ?? card.cardholder?.user_id ?? "-"}`);
 }
 
 function formatExpiration(
