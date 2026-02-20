@@ -12,14 +12,7 @@ This project uses Brex endpoints from:
 ## Install
 
 ```bash
-bun install
-bun run build
-```
-
-Run locally:
-
-```bash
-bun ./sources/main.ts --help
+npm install -g "brex-cli"
 ```
 
 ## Authentication
