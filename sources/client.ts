@@ -46,7 +46,12 @@ export function createBrexClient(): BrexClient {
       if (!response.ok) {
         let body: ApiError;
         try {
-          body = await response.json() as ApiError;
+          const parsed = await response.json();
+          if (parsed && typeof parsed === "object") {
+            body = parsed as ApiError;
+          } else {
+            body = { error: `HTTP ${response.status}`, message: response.statusText };
+          }
         } catch {
           body = { error: `HTTP ${response.status}`, message: response.statusText };
         }
