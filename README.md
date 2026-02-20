@@ -186,6 +186,7 @@ List transactions for an account.
 **Syntax:**
 ```
 brex transactions <account-id> [options] [--json]
+brex transactions --type card [options] [--json]
 ```
 
 **Options:**
@@ -193,49 +194,46 @@ brex transactions <account-id> [options] [--json]
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--type` | string | `cash` | Account type: `cash` or `card` |
-| `--limit <N>` | integer | 25 | Maximum number of transactions to return |
+| `--limit <N>` | integer | API default | Maximum number of transactions to return |
 | `--cursor` | string | none | Pagination cursor |
-| `--start <date>` | ISO date | none | Filter transactions on or after this date |
-| `--end <date>` | ISO date | none | Filter transactions on or before this date |
+| `--posted-at-start` | ISO date | none | Filter transactions posted on or after this date |
+
+> **Note:** Cash transactions require an `<account-id>`. Card transactions use the primary card account automatically (`--type card`).
 
 **Examples:**
 
 ```bash
-# List recent transactions for a cash account
-brex transactions abc123-def456-...
+# List recent cash transactions
+brex transactions dpacc_xxx
 
 # Card transactions with limit
-brex transactions abc123-def456-... --type card --limit 50
+brex transactions --type card --limit 50
 
-# Filter by date range
-brex transactions abc123-def456-... --start 2024-01-01 --end 2024-12-31
+# Filter by posted date
+brex transactions dpacc_xxx --posted-at-start 2026-01-01
 
 # Paginate results
-brex transactions abc123-def456-... --cursor <cursor>
-```
-
-### `brex transactions get`
-
-Get detailed information about a specific transaction.
-
-**Syntax:**
-```
-brex transactions get <account-id> <transaction-id> [--type cash|card] [--json]
+brex transactions dpacc_xxx --cursor <cursor>
 ```
 
 ---
 
 ## Transfers (Payments API)
 
-Create and manage outbound transfers.
+Create and manage transfers. Supports vendor payments (ACH/wire) and book transfers between your own accounts.
 
-### `brex transfer`
+### `brex transfer create`
 
-Send funds to a counterparty.
+Send funds to a vendor or move money between your own accounts.
 
-**Syntax:**
+**Vendor payment:**
 ```
-brex transfer --from <cash-account-id> --to <counterparty-id> --amount <decimal> --idempotency-key <key> [--currency <code>] [--json]
+brex transfer create --from <cash-account-id> --to <payment-instrument-id> --amount <cents> --description <text> --memo <text> [--currency <code>] [--approval manual]
+```
+
+**Book transfer (between own accounts):**
+```
+brex transfer create --from <cash-account-id> --to-account <cash-account-id> --amount <cents> --description <text> --memo <text>
 ```
 
 **Options:**
@@ -243,16 +241,28 @@ brex transfer --from <cash-account-id> --to <counterparty-id> --amount <decimal>
 | Option | Required | Type | Description |
 |--------|----------|------|-------------|
 | `--from` | Yes | string | Source cash account ID |
-| `--to` | Yes | string | Counterparty ID (recipient) |
-| `--amount` | Yes | decimal | Amount (e.g., `125.50`) |
-| `--idempotency-key` | Yes | string | Unique key to prevent duplicate transfers |
+| `--to` | One of | string | Vendor's payment instrument ID (from `/vendors`) |
+| `--to-account` | One of | string | Destination cash account ID (book transfer) |
+| `--amount` | Yes | integer | Amount in **cents** (e.g., `12550` for $125.50) |
+| `--description` | Yes | string | Internal description (not shown externally) |
+| `--memo` | Yes | string | External memo (max 90 chars for ACH/wire, 40 for cheque) |
 | `--currency` | No | string | Currency code (default: `USD`) |
+| `--idempotency-key` | No | string | Dedup key (auto-generated if omitted) |
+| `--approval` | No | string | Set to `manual` to require manual approval |
+
+> **Note:** Use `--to` for vendor payments and `--to-account` for moving money between your own Brex cash accounts. Cannot use both.
 
 **Examples:**
 
 ```bash
-# Send $125.50 to a recipient
-brex transfer --from acc-123 --to cpty-456 --amount 125.50 --idempotency-key "inv-2024-001"
+# Pay a vendor $125.50 via ACH
+brex transfer create --from dpacc_xxx --to pyi_xxx --amount 12550 --description "Invoice 001" --memo "Payment for services"
+
+# Move $1.00 from Primary to Vault
+brex transfer create --from dpacc_xxx --to-account dpacc_yyy --amount 100 --description "Savings" --memo "Move to vault"
+
+# With manual approval required
+brex transfer create --from dpacc_xxx --to pyi_xxx --amount 50000 --description "Large payment" --memo "Q1 invoice" --approval manual
 ```
 
 ### `brex transfer get`
@@ -265,74 +275,85 @@ brex transfer get <transfer-id> [--json]
 
 ### `brex transfer list`
 
-List transfers with optional filters.
+List transfers.
 
 **Syntax:**
 ```
-brex transfer list [--status <status>] [--limit <N>] [--cursor <cursor>] [--json]
+brex transfer list [--limit <N>] [--cursor <cursor>] [--json]
 ```
 
 **Options:**
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `--status` | string | Filter by status (e.g., `PROCESSING`, `COMPLETED`) |
 | `--limit` | integer | Maximum results |
 | `--cursor` | string | Pagination cursor |
-| `--from-account-id` | string | Filter by source account |
-| `--to-counterparty-id` | string | Filter by recipient |
+
+The list view shows direction (IN/OUT), counterparty name, amount, status, payment type, and date.
 
 ---
 
-## Recipients (Payment Counterparties)
+## Recipients (Vendors)
 
-Manage payment recipients for outbound transfers.
+Manage payment vendors (counterparties) for outbound transfers. Uses the Brex `/v1/vendors` API.
 
 **Aliases:** `recipient`, `recip`
 
 ### `brex recipients list`
 
-List all recipients.
+List all vendors.
 
 **Syntax:**
 ```
 brex recipients [list] [--limit <N>] [--cursor <cursor>] [--name <name>] [--json]
 ```
 
+**Options:**
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `--limit` | integer | Maximum results |
+| `--cursor` | string | Pagination cursor |
+| `--name` | string | Filter by company name |
+
 ### `brex recipients get`
 
-Get details about a recipient.
+Get detailed vendor info including payment accounts and instruments.
 
 ```bash
-brex recipients get <counterparty-id> [--json]
+brex recipients get <vendor-id> [--json]
 ```
 
-### `brex recipients add`
+### `brex recipients create`
 
-Add a new payment recipient.
+Create a new vendor. Optionally attach an ACH payment account.
 
 **Syntax:**
 ```
-brex recipients add --name <name> --account <number> --routing <number> [options] [--json]
+brex recipients create --name <company-name> [--email <email>] [--phone <phone>] [--routing <number> --account <number> --account-type CHECKING|SAVING --account-class BUSINESS|PERSONAL] [--idempotency-key <key>]
 ```
 
 **Options:**
 
 | Option | Required | Type | Description |
 |--------|----------|------|-------------|
-| `--name` | Yes | string | Recipient name |
-| `--account` | Yes | string | Bank account number |
-| `--routing` | Yes | string | Bank routing number (9 digits) |
-| `--account-type` | No | string | `CHECKING` or `SAVINGS` |
-| `--country` | No | string | Country code |
-| `--currency` | No | string | Currency code |
+| `--name` | Yes | string | Company name (must be unique) |
+| `--email` | No | string | Vendor email |
+| `--phone` | No | string | Vendor phone |
+| `--routing` | No* | string | Bank routing number |
+| `--account` | No* | string | Bank account number |
+| `--account-type` | No* | string | `CHECKING` or `SAVING` |
+| `--account-class` | No* | string | `BUSINESS` or `PERSONAL` |
+| `--idempotency-key` | No | string | Dedup key (auto-generated if omitted) |
+
+> *If any ACH field is provided, all four (`--routing`, `--account`, `--account-type`, `--account-class`) are required.
 
 ### `brex recipients delete`
 
-Delete a recipient.
+Delete a vendor.
 
 ```bash
-brex recipients delete <counterparty-id>
+brex recipients delete <vendor-id>
 ```
 
 ---
@@ -462,7 +483,7 @@ Create a new webhook endpoint.
 
 **Syntax:**
 ```
-brex webhooks create --url <url> [--events <event1,event2>] [--status <status>] [--json]
+brex webhooks create --url <url> [--events <event1,event2>] [--status <status>] [--idempotency-key <key>] [--json]
 ```
 
 **Event Types:** `PAYMENT_COMPLETED`, `TRANSFER_COMPLETED`, and others.
@@ -516,13 +537,19 @@ brex events get <event-id> [--json]
 
 ```bash
 brex transactions "$ACCOUNT_ID" --json | \
-  jq -r '.[] | [.id, .status, .amount, .counterpartyName] | @csv'
+  jq -r '.items[] | [.id, .type, .amount.amount, .description] | @csv'
 ```
 
 ### Daily Balance Check
 
 ```bash
-brex accounts get "$ACCOUNT_ID" --type cash --json | jq -r '.availableBalance'
+brex accounts get "$ACCOUNT_ID" --type cash --json | jq -r '.available_balance'
+```
+
+### List All Incoming Transfers
+
+```bash
+brex transfer list --json | jq '.items[] | select(.amount.amount < 0)'
 ```
 
 ---

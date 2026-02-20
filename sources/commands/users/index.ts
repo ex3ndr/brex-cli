@@ -133,7 +133,7 @@ async function listUsers(
   );
 
   if (response.next_cursor) {
-    console.log(`\nNext cursor: ${response.next_cursor}`);
+    console.log(`\nMore results available. Run with: --cursor ${response.next_cursor}`);
   }
 }
 

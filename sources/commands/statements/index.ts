@@ -162,10 +162,10 @@ async function listStatements(
       start: formatDate(statement.period_start_date ?? statement.period?.start_date),
       end: formatDate(statement.period_end_date ?? statement.period?.end_date),
       startBal: statement.start_balance
-        ? formatAmount(centsToDecimal(statement.start_balance.amount), statement.start_balance.currency)
+        ? formatAmount(statement.start_balance.amount, statement.start_balance.currency)
         : "-",
       endBal: statement.end_balance
-        ? formatAmount(centsToDecimal(statement.end_balance.amount), statement.end_balance.currency)
+        ? formatAmount(statement.end_balance.amount, statement.end_balance.currency)
         : "-",
     })),
     [
@@ -178,7 +178,7 @@ async function listStatements(
   );
 
   if (response.next_cursor) {
-    console.log(`\nNext cursor: ${response.next_cursor}`);
+    console.log(`\nMore results available. Run with: --cursor ${response.next_cursor}`);
   }
 }
 
@@ -209,19 +209,13 @@ async function getStatement(
   console.log(`Period Start:${" "}${formatDate(statement.period_start_date ?? statement.period?.start_date)}`);
   console.log(`Period End:  ${formatDate(statement.period_end_date ?? statement.period?.end_date)}`);
   if (statement.start_balance) {
-    console.log(`Start Bal:   ${formatAmount(centsToDecimal(statement.start_balance.amount), statement.start_balance.currency)}`);
+    console.log(`Start Bal:   ${formatAmount(statement.start_balance.amount, statement.start_balance.currency)}`);
   }
   if (statement.end_balance) {
-    console.log(`End Bal:     ${formatAmount(centsToDecimal(statement.end_balance.amount), statement.end_balance.currency)}`);
+    console.log(`End Bal:     ${formatAmount(statement.end_balance.amount, statement.end_balance.currency)}`);
   }
   if (statement.due_date) console.log(`Due Date:    ${formatDate(statement.due_date)}`);
   if (statement.download_url) console.log(`Download:    ${statement.download_url}`);
-}
-
-/** Brex API returns amounts in cents — convert to decimal for display. */
-function centsToDecimal(amount: number | undefined): number | undefined {
-  if (amount === undefined) return undefined;
-  return amount / 100;
 }
 
 function withCursor(path: string, cursor?: string): string {

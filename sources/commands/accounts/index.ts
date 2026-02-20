@@ -16,23 +16,24 @@ type ApiAmount = {
 
 type CashAccount = {
   id: string;
-  account_name?: string;
+  name?: string;
   account_number?: string;
   routing_number?: string;
   current_balance?: ApiAmount;
   available_balance?: ApiAmount;
-  created_at?: string;
-  account_type?: string;
+  primary?: boolean;
   status?: string;
 };
 
 type CardAccount = {
   id: string;
-  account_name?: string;
   current_balance?: ApiAmount;
-  limit?: ApiAmount;
-  created_at?: string;
-  account_type?: string;
+  available_balance?: ApiAmount;
+  account_limit?: ApiAmount;
+  current_statement_period?: {
+    start_date?: string;
+    end_date?: string;
+  };
   status?: string;
 };
 
@@ -168,7 +169,7 @@ async function listAccounts(
     }
     printAccountsTable(cashAccounts.map((account) => toAccountRow(account, "cash")));
     if (cashResponse.next_cursor) {
-      console.log(`\nNext cursor: ${cashResponse.next_cursor}`);
+      console.log(`\nMore results available. Run with: --cursor ${cashResponse.next_cursor}`);
     }
     return;
   }
@@ -182,7 +183,7 @@ async function listAccounts(
     }
     printAccountsTable(cardAccounts.map((account) => toAccountRow(account, "card")));
     if (cardResponse.next_cursor) {
-      console.log(`\nNext cursor: ${cardResponse.next_cursor}`);
+      console.log(`\nMore results available. Run with: --cursor ${cardResponse.next_cursor}`);
     }
     return;
   }
@@ -269,16 +270,15 @@ function renderAccount(
 }
 
 function toAccountRow(account: CashAccount | CardAccount, type: "cash" | "card"): AccountRow {
-  const availableBalance = "available_balance" in account ? account.available_balance : undefined;
+  const availableBalance = account.available_balance;
   const currentBalance = account.current_balance;
   const status = account.status ?? "-";
-  const accountName = account.account_name ?? "-";
-  const accountType = account.account_type ?? type;
+  const accountName = "name" in account ? (account.name ?? "-") : "-";
 
   return {
     id: account.id,
     name: accountName,
-    type: accountType,
+    type,
     status,
     accountNumber: "account_number" in account ? account.account_number ?? "-" : "-",
     routingNumber: "routing_number" in account ? account.routing_number ?? "-" : "-",

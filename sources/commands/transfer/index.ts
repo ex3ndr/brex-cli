@@ -1,86 +1,66 @@
 import type { Command, CommandContext } from "../types.js";
-import { formatAmount, formatDate, parseOutputFlag, printJson, printTable } from "../../output.js";
+import { formatAmount, formatDate, parseOutputFlag, printJson, printTable, truncate } from "../../output.js";
 
-const USAGE = `brex transfer --from <cash-account-id> --to <counterparty-id> --amount <decimal> --idempotency-key <key> [--currency <code>]
+const USAGE = `brex transfer create --from <cash-account-id> --to <payment-instrument-id> --amount <cents> --description <text> --memo <text> [--currency <code>] [--approval manual]
+brex transfer create --from <cash-account-id> --to-account <cash-account-id> --amount <cents> --description <text> --memo <text>  (book transfer between own accounts)
 brex transfer get <transfer-id>
-brex transfer list [--cursor <cursor>] [--limit <N>] [--status <status>] [--from-account-id <id>] [--to-counterparty-id <id>]
+brex transfer list [--cursor <cursor>] [--limit <N>]
 brex transfer --json`;
-
-type TransferAmount = {
-  amount: string;
-  currency: string;
-};
 
 type Transfer = {
   id: string;
-  amount?: TransferAmount;
-  status?: string;
-  created_at?: string;
-  idempotency_key?: string;
-  display_name?: string;
-  payment_type?: string;
-  process_date?: string;
-  estimated_delivery_date?: string;
-  external_memo?: string;
-  originating_account?: {
-    type?: string;
-    id?: string;
+  amount: { amount: number; currency?: string };
+  status: string;
+  payment_type: string;
+  originating_account: {
+    type: string;
+    id: string;
   };
   counterparty?: {
-    type?: string;
+    type: string;
+    id?: string;
+    payment_instrument_id?: string;
     description?: string;
     routing_number?: string;
     account_number?: string;
     external_memo?: string;
+    deposit_account_id?: string;
   };
-  // Legacy field shapes (kept for forward-compat)
-  from_account?: {
-    cash_account?: { id?: string };
-  };
-  recipient?: {
-    payment_counterparty?: { id?: string };
-  };
-};
-
-type CreateTransferRequest = {
-  from_account: {
-    cash_account: {
-      id: string;
-    };
-  };
-  recipient: {
-    payment_counterparty: {
-      id: string;
-    };
-  };
-  amount: TransferAmount;
+  description?: string;
+  display_name?: string;
+  external_memo?: string;
+  process_date?: string;
+  estimated_delivery_date?: string;
+  created_at?: string;
+  creator_user_id?: string;
+  cancellation_reason?: string;
+  idempotency_key?: string;
+  is_ppro_enabled?: boolean;
 };
 
 type ListTransfersResponse = {
-  items?: Transfer[];
-  transfers?: Transfer[];
+  items: Transfer[];
   next_cursor?: string;
 };
 
-type GetTransferResponse = {
-  transfer?: Transfer;
-  item?: Transfer;
-} & Transfer;
+type CounterpartyType = "VENDOR" | "BOOK_TRANSFER";
 
 type CreateTransferOptions = {
   fromAccountId: string;
-  toCounterpartyId: string;
-  amount: string;
+  counterpartyType: CounterpartyType;
+  toPaymentInstrumentId?: string;
+  toDepositAccountId?: string;
+  amountCents: number;
   currency: string;
+  description: string;
+  externalMemo: string;
   idempotencyKey: string;
+  approvalType?: "MANUAL";
 };
 
 type ListTransferOptions = {
   cursor?: string;
   limit?: number;
-  status?: string;
-  fromAccountId?: string;
-  toCounterpartyId?: string;
 };
 
 export const transferCommand: Command = {
@@ -98,22 +78,38 @@ export const transferCommand: Command = {
       return;
     }
 
-    if (subcommand === "list") {
-      await listTransfers(context, parseListTransferOptions(remaining.slice(1)), format);
+    if (subcommand === "list" || !subcommand) {
+      await listTransfers(context, parseListTransferOptions(remaining.slice(subcommand === "list" ? 1 : 0)), format);
       return;
     }
 
-    const options = parseCreateTransferOptions(remaining);
-    await createTransfer(context, options, format);
+    if (subcommand === "create") {
+      const options = parseCreateTransferOptions(remaining.slice(1));
+      await createTransfer(context, options, format);
+      return;
+    }
+
+    // If no subcommand matched but args start with --, assume create
+    if (subcommand.startsWith("--")) {
+      const options = parseCreateTransferOptions(remaining);
+      await createTransfer(context, options, format);
+      return;
+    }
+
+    throw new Error(`Unknown subcommand: ${subcommand}. Use 'create', 'get', or 'list'.`);
   },
 };
 
 function parseCreateTransferOptions(args: readonly string[]): CreateTransferOptions {
   let fromAccountId: string | undefined;
-  let toCounterpartyId: string | undefined;
-  let amount: string | undefined;
+  let toPaymentInstrumentId: string | undefined;
+  let toDepositAccountId: string | undefined;
+  let amountCents: number | undefined;
   let currency = "USD";
+  let description: string | undefined;
+  let externalMemo: string | undefined;
   let idempotencyKey: string | undefined;
+  let approvalType: "MANUAL" | undefined;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -128,19 +124,26 @@ function parseCreateTransferOptions(args: readonly string[]): CreateTransferOpti
 
     if (arg === "--to") {
       const value = args[++i];
-      if (!value) throw new Error("--to requires a value");
-      toCounterpartyId = value;
+      if (!value) throw new Error("--to requires a payment_instrument_id");
+      toPaymentInstrumentId = value;
+      continue;
+    }
+
+    if (arg === "--to-account") {
+      const value = args[++i];
+      if (!value) throw new Error("--to-account requires a cash account ID (for book transfers)");
+      toDepositAccountId = value;
       continue;
     }
 
     if (arg === "--amount") {
       const value = args[++i];
-      if (!value) throw new Error("--amount requires a value");
-      const parsed = Number(value);
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        throw new Error("--amount must be a positive number (e.g. 125.50)");
+      if (!value) throw new Error("--amount requires a value (in cents, e.g. 12550 for $125.50)");
+      const parsed = parseInt(value, 10);
+      if (Number.isNaN(parsed) || parsed <= 0) {
+        throw new Error("--amount must be a positive integer in cents (e.g. 12550 for $125.50)");
       }
-      amount = parsed.toFixed(2);
+      amountCents = parsed;
       continue;
     }
 
@@ -151,10 +154,35 @@ function parseCreateTransferOptions(args: readonly string[]): CreateTransferOpti
       continue;
     }
 
+    if (arg === "--description" || arg === "--desc") {
+      const value = args[++i];
+      if (!value) throw new Error(`${arg} requires a value`);
+      description = value;
+      continue;
+    }
+
+    if (arg === "--memo" || arg === "--external-memo") {
+      const value = args[++i];
+      if (!value) throw new Error(`${arg} requires a value`);
+      if (value.length > 90) throw new Error("Memo must be at most 90 characters");
+      externalMemo = value;
+      continue;
+    }
+
     if (arg === "--idempotency-key") {
       const value = args[++i];
       if (!value) throw new Error("--idempotency-key requires a value");
       idempotencyKey = value;
+      continue;
+    }
+
+    if (arg === "--approval") {
+      const value = args[++i];
+      if (value?.toUpperCase() === "MANUAL") {
+        approvalType = "MANUAL";
+      } else {
+        throw new Error("--approval must be 'manual'");
+      }
       continue;
     }
 
@@ -163,12 +191,31 @@ function parseCreateTransferOptions(args: readonly string[]): CreateTransferOpti
     }
   }
 
-  if (!fromAccountId) throw new Error("Missing required --from");
-  if (!toCounterpartyId) throw new Error("Missing required --to");
-  if (!amount) throw new Error("Missing required --amount");
-  if (!idempotencyKey) throw new Error("Missing required --idempotency-key");
+  if (!fromAccountId) throw new Error("Missing required --from <cash-account-id>");
+  if (!toPaymentInstrumentId && !toDepositAccountId) {
+    throw new Error("Missing required --to <payment-instrument-id> or --to-account <cash-account-id>");
+  }
+  if (toPaymentInstrumentId && toDepositAccountId) {
+    throw new Error("Cannot use both --to and --to-account. Use --to for vendor payments, --to-account for book transfers.");
+  }
+  if (!amountCents) throw new Error("Missing required --amount <cents>");
+  if (!description) throw new Error("Missing required --description");
+  if (!externalMemo) throw new Error("Missing required --memo");
 
-  return { fromAccountId, toCounterpartyId, amount, currency, idempotencyKey };
+  const counterpartyType: CounterpartyType = toDepositAccountId ? "BOOK_TRANSFER" : "VENDOR";
+
+  return {
+    fromAccountId,
+    counterpartyType,
+    toPaymentInstrumentId,
+    toDepositAccountId,
+    amountCents,
+    currency,
+    description,
+    externalMemo,
+    idempotencyKey: idempotencyKey ?? crypto.randomUUID(),
+    approvalType,
+  };
 }
 
 function parseListTransferOptions(args: readonly string[]): ListTransferOptions {
@@ -196,27 +243,6 @@ function parseListTransferOptions(args: readonly string[]): ListTransferOptions 
       continue;
     }
 
-    if (arg === "--status") {
-      const value = args[++i];
-      if (!value) throw new Error("--status requires a value");
-      options.status = value;
-      continue;
-    }
-
-    if (arg === "--from-account-id") {
-      const value = args[++i];
-      if (!value) throw new Error("--from-account-id requires a value");
-      options.fromAccountId = value;
-      continue;
-    }
-
-    if (arg === "--to-counterparty-id") {
-      const value = args[++i];
-      if (!value) throw new Error("--to-counterparty-id requires a value");
-      options.toCounterpartyId = value;
-      continue;
-    }
-
     if (arg.startsWith("-")) {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -230,31 +256,32 @@ async function createTransfer(
   options: CreateTransferOptions,
   format: "table" | "json"
 ): Promise<void> {
-  const body: CreateTransferRequest = {
-    from_account: {
-      cash_account: {
-        id: options.fromAccountId,
-      },
+  const counterparty = options.counterpartyType === "BOOK_TRANSFER"
+    ? { type: "BOOK_TRANSFER" as const, recipient: { type: "ACCOUNT_ID", id: options.toDepositAccountId } }
+    : { type: "VENDOR" as const, payment_instrument_id: options.toPaymentInstrumentId };
+
+  const body = {
+    originating_account: {
+      type: "BREX_CASH",
+      id: options.fromAccountId,
     },
-    recipient: {
-      payment_counterparty: {
-        id: options.toCounterpartyId,
-      },
-    },
+    counterparty,
     amount: {
-      amount: options.amount,
+      amount: options.amountCents,
       currency: options.currency,
     },
+    description: options.description,
+    external_memo: options.externalMemo,
+    ...(options.approvalType ? { approval_type: options.approvalType } : {}),
   };
 
-  const response = await context.client.fetch<GetTransferResponse>("/v1/transfers", {
+  const transfer = await context.client.fetch<Transfer>("/v1/transfers", {
     method: "POST",
     headers: {
       "Idempotency-Key": options.idempotencyKey,
     },
     body: JSON.stringify(body),
   });
-  const transfer = response.transfer ?? response.item ?? response;
 
   if (format === "json") {
     printJson(transfer);
@@ -269,8 +296,7 @@ async function getTransfer(
   transferId: string,
   format: "table" | "json"
 ): Promise<void> {
-  const response = await context.client.fetch<GetTransferResponse>(`/v1/transfers/${transferId}`);
-  const transfer = response.transfer ?? response.item ?? response;
+  const transfer = await context.client.fetch<Transfer>(`/v1/transfers/${transferId}`);
 
   if (format === "json") {
     printJson(transfer);
@@ -288,13 +314,10 @@ async function listTransfers(
   const params = new URLSearchParams();
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.limit) params.set("limit", String(options.limit));
-  if (options.status) params.set("status", options.status);
-  if (options.fromAccountId) params.set("from_account_id", options.fromAccountId);
-  if (options.toCounterpartyId) params.set("to_counterparty_id", options.toCounterpartyId);
   const query = params.toString();
   const path = query ? `/v1/transfers?${query}` : "/v1/transfers";
   const response = await context.client.fetch<ListTransfersResponse>(path);
-  const transfers = response.items ?? response.transfers ?? [];
+  const transfers = response.items ?? [];
 
   if (format === "json") {
     printJson({ items: transfers, nextCursor: response.next_cursor ?? null });
@@ -307,49 +330,52 @@ async function listTransfers(
   }
 
   printTable(
-    transfers.map((transfer) => ({
-      id: transfer.id,
-      name: transfer.display_name ?? transfer.counterparty?.description ?? "-",
-      from: transfer.originating_account?.id ?? transfer.from_account?.cash_account?.id ?? "-",
-      amount: transfer.amount
-        ? formatAmount(centsToDecimal(transfer.amount.amount), transfer.amount.currency)
-        : "-",
-      status: transfer.status ?? "-",
-      date: formatDate(transfer.process_date ?? transfer.created_at),
-    })),
+    transfers.map((transfer) => {
+      const cents = transfer.amount.amount;
+      const isIncoming = cents < 0;
+      return {
+        id: transfer.id,
+        direction: isIncoming ? "IN" : "OUT",
+        name: truncate(transfer.display_name ?? transfer.counterparty?.description ?? "-", 20),
+        amount: formatAmount(Math.abs(cents), transfer.amount.currency),
+        status: transfer.status,
+        type: transfer.payment_type,
+        date: formatDate(transfer.process_date ?? transfer.created_at),
+      };
+    }),
     [
       { key: "id", header: "Transfer ID", width: 36 },
+      { key: "direction", header: "Dir", width: 4 },
       { key: "name", header: "Name", width: 20 },
-      { key: "from", header: "From Account", width: 36 },
       { key: "amount", header: "Amount", width: 14 },
-      { key: "status", header: "Status", width: 12 },
+      { key: "status", header: "Status", width: 18 },
+      { key: "type", header: "Type", width: 18 },
       { key: "date", header: "Date", width: 12 },
     ]
   );
 
   if (response.next_cursor) {
-    console.log(`\nNext cursor: ${response.next_cursor}`);
+    console.log(`\nMore results available. Run with: --cursor ${response.next_cursor}`);
   }
 }
 
 function printTransferDetails(transfer: Transfer, title: string): void {
+  const cents = transfer.amount.amount;
+  const isIncoming = cents < 0;
   console.log(title);
   console.log("──────────────────");
   console.log(`ID:           ${transfer.id}`);
+  console.log(`Direction:    ${isIncoming ? "INCOMING (credit)" : "OUTGOING (debit)"}`);
   console.log(`Name:         ${transfer.display_name ?? transfer.counterparty?.description ?? "-"}`);
-  console.log(`From Account: ${transfer.originating_account?.id ?? transfer.from_account?.cash_account?.id ?? "-"}`);
-  console.log(`To:           ${transfer.counterparty?.description ?? transfer.recipient?.payment_counterparty?.id ?? "-"}`);
-  console.log(`Amount:       ${transfer.amount ? formatAmount(centsToDecimal(transfer.amount.amount), transfer.amount.currency) : "-"}`);
-  console.log(`Status:       ${transfer.status ?? "-"}`);
-  console.log(`Type:         ${transfer.payment_type ?? "-"}`);
+  console.log(`From Account: ${transfer.originating_account.id}`);
+  console.log(`To:           ${transfer.counterparty?.id ?? transfer.counterparty?.payment_instrument_id ?? "-"}`);
+  console.log(`Amount:       ${formatAmount(Math.abs(cents), transfer.amount.currency)}`);
+  console.log(`Status:       ${transfer.status}`);
+  console.log(`Type:         ${transfer.payment_type}`);
+  if (transfer.cancellation_reason) console.log(`Cancelled:    ${transfer.cancellation_reason}`);
   if (transfer.process_date) console.log(`Process Date: ${formatDate(transfer.process_date)}`);
   if (transfer.estimated_delivery_date) console.log(`Est Delivery: ${formatDate(transfer.estimated_delivery_date)}`);
   if (transfer.external_memo) console.log(`Memo:         ${transfer.external_memo}`);
-  if (transfer.idempotency_key) console.log(`Idempotency:  ${transfer.idempotency_key}`);
-}
-
-/** Brex API returns amounts in cents — convert to decimal for display. */
-function centsToDecimal(amount: string | number): number {
-  const numeric = typeof amount === "string" ? Number(amount) : amount;
-  return numeric / 100;
+  if (transfer.description) console.log(`Description:  ${transfer.description}`);
+  if (transfer.creator_user_id) console.log(`Creator:      ${transfer.creator_user_id}`);
 }
