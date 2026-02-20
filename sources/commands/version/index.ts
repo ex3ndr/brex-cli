@@ -10,7 +10,7 @@ function getVersion(): string {
       const candidate = join(dir, "package.json");
       try {
         const pkg = JSON.parse(readFileSync(candidate, "utf-8"));
-        if (pkg.name === "brex-cli" || pkg.version) return pkg.version ?? "unknown";
+        if (pkg.name === "brex-cli" && pkg.version) return pkg.version;
       } catch { /* not found, keep walking */ }
       dir = dirname(dir);
     }
