@@ -5,10 +5,16 @@ import { fileURLToPath } from "node:url";
 
 function getVersion(): string {
   try {
-    const dir = dirname(fileURLToPath(import.meta.url));
-    const pkgPath = join(dir, "..", "..", "..", "package.json");
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-    return pkg.version ?? "unknown";
+    let dir = dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 5; i++) {
+      const candidate = join(dir, "package.json");
+      try {
+        const pkg = JSON.parse(readFileSync(candidate, "utf-8"));
+        if (pkg.name === "brex-cli" || pkg.version) return pkg.version ?? "unknown";
+      } catch { /* not found, keep walking */ }
+      dir = dirname(dir);
+    }
+    return process.env.npm_package_version ?? "unknown";
   } catch {
     return "unknown";
   }
